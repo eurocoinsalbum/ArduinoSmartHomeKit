@@ -352,13 +352,13 @@ void show_password_display() {
 }
 
 void beep() {
-   //tone(SOUND_PIN, 440);
+   tone(SOUND_PIN, 440);
    delay(200);
    noTone(SOUND_PIN);
    delay(300);
 }
 void beep_long() {
-   //tone(SOUND_PIN, 440);
+   tone(SOUND_PIN, 440);
    delay(700);
    noTone(SOUND_PIN);
    delay(300);
