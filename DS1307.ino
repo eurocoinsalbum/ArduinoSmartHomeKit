@@ -17,9 +17,9 @@ void loop () {
     DateTime now = rtc.now();
     // alle 5 Sekunden für 1 Sekunde piepen
     if (now.second() % 5 == 0) {
-      digitalWrite(SOUND_PIN, HIGH);
-      delay(1000);
-      digitalWrite(SOUND_PIN, LOW);
+         tone(SOUND_PIN, 440);
+         delay(1000);
+         noTone(SOUND_PIN);
     }
 
     delay(200);
