@@ -105,7 +105,7 @@ void setup() {
 
   #ifdef EXTENSION_KIT
   Serial.println("Init RealTimeClock...");
-  if (! rtc.begin()) {
+  if (!rtc.begin()) {
     Serial.println("Couldn't find RTC");
     Serial.flush();
     lcd_display.setCursor(0, 0);
