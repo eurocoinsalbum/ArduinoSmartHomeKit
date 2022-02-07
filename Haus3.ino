@@ -27,6 +27,12 @@
 // Brenndauer der Aussenleuchte
 #define OUTER_LIGHT_ON_MILLIS 5000
 
+// Status Sensoren etc.
+int inner_light_value = 0;
+int outer_light_value = 0;
+int soil_value = 0;
+int display_code = 0;
+
 // Servos
 #define SERVO_DOOR_ANGLE_OPEN     100
 #define SERVO_DOOR_ANGLE_CLOSED     0
@@ -56,9 +62,11 @@ RTC_DS1307 rtc;
 
 void setup() {
   Serial.begin(115200);
-  
+
+  Serial.println("Init LCD display...");
   lcd_display.init();
   lcd_display.backlight();
+  Serial.println("Init LCD display OK");
   
   pinMode(BUTTON_1_PIN, INPUT);
   pinMode(BUTTON_2_PIN, INPUT);
@@ -87,19 +95,32 @@ void setup() {
   turn_off_fan();
 
   // Tuer schliessen
+  Serial.println("Closing door and open window...");
   servo_door.write(SERVO_DOOR_ANGLE_CLOSED);
   servo_door_position = SERVO_DOOR_ANGLE_CLOSED;
   // Fenster öffnen
   servo_window.write(SERVO_WINDOW_ANGLE_OPEN);
   servo_window_position = SERVO_WINDOW_ANGLE_OPEN;
+  Serial.println("Closing door and open window OK");
 
   #ifdef EXTENSION_KIT
+  Serial.println("Init RealTimeClock...");
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    Serial.flush();
+    lcd_display.setCursor(0, 0);
+    lcd_display.print("RTC error");
+    while (1) delay(10);
+  }
+  
   // Uhrzeit auf Kompilierungsdatum setzen, sofern diese noch nie initialisiert wurde
   if (!rtc.isrunning()) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+  Serial.println("Init RealTimeClock OK");
   #endif
-  
+
+  Serial.println("Smart Home ready!");
   // sound fuer alles OK
   beep();
   beep_long();
@@ -125,19 +146,31 @@ void loop() {
 void check_gas_sensor() {
   // teste Gas auf Schwellenwert
   if (get_gas_sensor() > 700) {
+    Serial.print("Gas alert: ");
+    Serial.println(get_gas_sensor());
     play_gas_alert();
     delay(1000);
   }
 }
 
 void check_soil_sensor() {
+  int old_value = soil_value;
+  soil_value = get_soil_sensor();
   // teste Bodenfeuchtigkeit auf Schwellenwert
-  if (get_soil_sensor() > 50) {
-    turn_on_relay();
-    play_soil_alert();
-    delay(1000);
+  if (soil_value > 50) {
+    if (old_value <= 50) {
+      Serial.print("Soil alert: ");
+      Serial.println(get_soil_sensor());
+      turn_on_relay();
+      play_soil_alert();
+      delay(1000);
+    }
   } else {
-    turn_off_relay();
+    if (old_value > 50) {
+      Serial.print("Soil alert stopped: ");
+      Serial.println(get_soil_sensor());
+      turn_off_relay();
+    }
   }
 }
 
@@ -145,6 +178,8 @@ void check_rain_sensor() {
   // teste Regen auf oberen Schwellenwert
   if (get_rain_sensor() > 800) {
     if (is_window_open()) {
+      Serial.print("Rain alert: ");
+      Serial.println(get_rain_sensor());
       dimm_fan(70);
       close_window();
     }
@@ -153,6 +188,8 @@ void check_rain_sensor() {
   // teste Regen auf unteren Schwellenwert
   if (get_rain_sensor() < 100) {
     if (!is_window_open()) {
+      Serial.print("Rain alert stopped: ");
+      Serial.println(get_rain_sensor());
       turn_off_fan();
       open_window();
     }
@@ -160,23 +197,44 @@ void check_rain_sensor() {
 }
 
 void check_move_sensor() {
+  int old_value = outer_light_value;
+  outer_light_value = get_move_sensor();
   // teste Bewegungsmelder
-  if (get_move_sensor() == HIGH) {
-    turn_on_outer_light();
+  if (outer_light_value == HIGH) {
+    if (old_value != outer_light_value) {
+      Serial.print("Movement alert: ");
+      Serial.println(get_move_sensor());
+      turn_on_outer_light();
+    }
   } else {
-    turn_off_outer_light();
+    if (old_value != outer_light_value) {
+      Serial.print("Movement alert stopped ");
+      Serial.println(get_move_sensor());
+      turn_off_outer_light();
+    }
   }
 }
 
 void check_light_sensor() {
-  int light_value = get_light_sensor();
+  int old_value = inner_light_value;
+  inner_light_value = get_light_sensor();
   // teste Helligkeitssensor auf Schwellenwert
-  if (light_value > 512) {
-    turn_off_inner_light();
-  } else if (light_value > 100) {
-    dimm_inner_light((512 - light_value) / 4);
+  if (inner_light_value > 512) {
+    if (old_value <= 512) {
+      Serial.print("Light value: ");
+      Serial.println(inner_light_value);
+      turn_off_inner_light();
+    }
+  } else if (inner_light_value > 100) {
+    Serial.print("Dimming light: ");
+    Serial.println(inner_light_value);
+    dimm_inner_light((512 - inner_light_value) / 4);
   } else {
-    turn_on_inner_light();
+    if (old_value > 100) {
+      Serial.print("Light value: ");
+      Serial.println(inner_light_value);
+      turn_on_inner_light();
+    }
   }
 }
 
@@ -199,9 +257,13 @@ void check_door() {
     // Button 1 kurz oder lang gedrueckt (500ms)
     if (millis() - start_time < 500) {
       password += ".";
+      Serial.println("Short button pressed");
     } else {
       password += "-";
+      Serial.println("Long button pressed");
     }
+    Serial.println(password);
+
     // Zeige aktuelles Passwort in Spalte 0, Zeile 1
     lcd_display.setCursor(0, 1);
     lcd_display.print(password);
@@ -209,11 +271,14 @@ void check_door() {
 
   // teste, ob Button 2 gedrueckt wurde
   if (digitalRead(BUTTON_2_PIN) == 0) {
+    Serial.println("Enter button pressed");
     // teste, ob der richtige Code eingetippte wurde
     if (password == DOOR_CODE) {
+      Serial.println("Door code correct");
       play_correct_code_sound();
       open_and_close_door();
     } else {
+      Serial.println("Door code wrong");
       lcd_display.setCursor(0, 0);
       lcd_display.print("Falscher Code!");
       play_wrong_code_sound();
@@ -257,30 +322,37 @@ void close_window() {
 }
 
 void open_window() {
+  Serial.println("Closing window");
   move_servo(servo_window, servo_window_position, SERVO_WINDOW_ANGLE_OPEN);
 }
 
 void turn_on_relay() {
+  Serial.println("Turn on relay");
   digitalWrite(RELAY_PIN, HIGH);
 }
 
 void turn_off_relay() {
+  Serial.println("Turn off relay");
   digitalWrite(RELAY_PIN, LOW);
 }
 
 void turn_on_outer_light() {
+  Serial.println("Turn on outer light");
   digitalWrite(LED_PIN, HIGH);
 }
 
 void turn_off_outer_light() {
+  Serial.println("Turn off outer light");
   digitalWrite(LED_PIN, LOW);
 }
 
 void turn_on_inner_light() {
+  Serial.println("Turn on inner light");
   digitalWrite(LED_2_PIN, HIGH);
 }
 
 void turn_off_inner_light() {
+  Serial.println("Turn off inner light");
   digitalWrite(LED_2_PIN, LOW);
 }
 
@@ -290,19 +362,24 @@ void dimm_inner_light(int value) {
 }
 
 void turn_on_fan() {
+  Serial.println("Turn on fan");
   digitalWrite(FAN_PIN_B_POWER, HIGH);
 }
 
 void turn_off_fan() {
+  Serial.println("Turn off fan");
   digitalWrite(FAN_PIN_B_POWER, LOW);
 }
 
 void dimm_fan(int value) {
+  Serial.print("Dimm fan: ");
+  Serial.println(value);
   // 0-255, 0=aus, 255=hoechste Stufe
   analogWrite(FAN_PIN_B_POWER, value);
 }
 
 void open_and_close_door() {
+  Serial.println("Open and close door...");
   lcd_display.clear();
   lcd_display.setCursor(0, 0);
   lcd_display.print("Offen!");
@@ -312,14 +389,17 @@ void open_and_close_door() {
   lcd_display.setCursor(0, 0);
   lcd_display.print("Schliessen");
   close_door();
+  Serial.println("Open and close door OK");
   delay(1000);
 }
 
 void open_door() {
+  Serial.println("Open door");
   move_servo(servo_door, servo_door_position, SERVO_DOOR_ANGLE_OPEN);
 }
 
 void close_door() {
+  Serial.println("Close door");
   move_servo(servo_door, servo_door_position, SERVO_DOOR_ANGLE_CLOSED);
 }
 
@@ -337,10 +417,12 @@ void move_servo(Servo& servo, int& from_rotate, int to_rotate) {
 }
 
 void start_fan() {
+  Serial.println("Start fan");
   digitalWrite(FAN_PIN_B_POWER, HIGH);
 }
 
 void stop_fan() {
+  Serial.println("Stop fan");
   digitalWrite(FAN_PIN_B_POWER, LOW);
 }
 
@@ -352,37 +434,43 @@ void show_password_display() {
 }
 
 void beep() {
-   tone(SOUND_PIN, 440);
-   delay(200);
-   noTone(SOUND_PIN);
-   delay(300);
+  Serial.println("Beep");
+  tone(SOUND_PIN, 440);
+  delay(200);
+  noTone(SOUND_PIN);
+  delay(300);
 }
 void beep_long() {
-   tone(SOUND_PIN, 440);
-   delay(700);
-   noTone(SOUND_PIN);
+  Serial.println("Beep long");
+  tone(SOUND_PIN, 440);
+  delay(700);
+  noTone(SOUND_PIN);
    delay(300);
 }
 
 void play_soil_alert() {
+  Serial.println("Play soil alert");
   beep();
   beep();
   beep_long();
 }
 
 void play_gas_alert() {
+  Serial.println("Play gas alert");
   beep();
   beep_long();
   beep_long();
 }
 
 void play_correct_code_sound() {
+  Serial.println("Play correct code");
   beep();
   beep();
   beep();
 }
 
 void play_wrong_code_sound() {
+  Serial.println("Play wrong code");
   beep_long();
   beep_long();
   beep_long();
@@ -506,8 +594,16 @@ void update_door_display() {
   if (password.length() > 0) {
     return;
   }
+
+  int old_value = display_code;
+  display_code = (millis() / 1000) % 10;
+  if (old_value == display_code) {
+    return;
+  }
   
-  switch ((millis() / 1000) % 10) {
+  Serial.print("Display code: ");
+  Serial.println(display_code);
+  switch (display_code) {
     // Passworteingabe
     case 0: {
       show_password_display();
@@ -515,7 +611,12 @@ void update_door_display() {
     }
 
     // Uhrzeit
-    case 5: {
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    {
       show_date_time_display();
       break;
     }
@@ -525,7 +626,7 @@ void update_door_display() {
 void show_date_time_display() {
   DateTime now = rtc.now();
   // Datum
-  sprintf(display_buffer, "Datum: %02d.%02d.%04d", now.day(),now.month(),now.year());
+  sprintf(display_buffer, "Datum:%02d.%02d.%04d", now.day(),now.month(),now.year());
   lcd_display.setCursor(0, 0);
   lcd_display.print(display_buffer);
 
